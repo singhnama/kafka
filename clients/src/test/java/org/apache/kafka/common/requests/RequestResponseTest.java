@@ -210,6 +210,7 @@ import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.ByteBufferAccessor;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.ObjectSerializationCache;
+import org.apache.kafka.common.protocol.types.RawTaggedField;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
 import org.apache.kafka.common.quota.ClientQuotaEntity;
 import org.apache.kafka.common.quota.ClientQuotaFilter;
@@ -231,6 +232,7 @@ import org.apache.kafka.common.security.token.delegation.DelegationToken;
 import org.apache.kafka.common.security.token.delegation.TokenInformation;
 import org.apache.kafka.common.utils.SecurityUtils;
 import org.apache.kafka.common.utils.Utils;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.nio.BufferUnderflowException;
@@ -269,10 +271,12 @@ import static org.apache.kafka.common.protocol.ApiKeys.LIST_OFFSETS;
 import static org.apache.kafka.common.protocol.ApiKeys.METADATA;
 import static org.apache.kafka.common.protocol.ApiKeys.OFFSET_FETCH;
 import static org.apache.kafka.common.protocol.ApiKeys.PRODUCE;
+import static org.apache.kafka.common.protocol.ApiKeys.SASL_AUTHENTICATE;
 import static org.apache.kafka.common.protocol.ApiKeys.STOP_REPLICA;
 import static org.apache.kafka.common.protocol.ApiKeys.SYNC_GROUP;
 import static org.apache.kafka.common.protocol.ApiKeys.UPDATE_METADATA;
 import static org.apache.kafka.common.protocol.ApiKeys.WRITE_TXN_MARKERS;
+
 import static org.apache.kafka.common.requests.FetchMetadata.INVALID_SESSION_ID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -887,6 +891,45 @@ public class RequestResponseTest {
             ByteBuffer buffer = defaultApiVersionsResponse().serialize(version);
             ApiVersionsResponse response = ApiVersionsResponse.parse(buffer, version);
             assertEquals(Errors.NONE.code(), response.data().errorCode());
+        }
+    }
+
+    @Test
+    public void testMetadataResponse() {
+        MetadataResponse response = createMetadataResponse(METADATA.latestVersion());
+
+        Collection<MetadataResponse.TopicMetadata> topicMetadatas = response.topicMetadata();
+        assertEquals(3, topicMetadatas.size());
+        MetadataResponse.TopicMetadata topicWithObservers =  topicMetadatas.stream()
+                .filter(topicMetadata -> topicMetadata.topic().equals("__consumer_offsets"))
+                .findFirst()
+                .get();
+        for (MetadataResponse.PartitionMetadata partition : topicWithObservers.partitionMetadata()) {
+            assertEquals(2, partition.replicaIds.size());
+            assertEquals(1, partition.observerIds.size());
+            assertTrue(partition.replicaIds.containsAll(partition.observerIds));
+            PartitionInfo partitionInfo = MetadataResponse.toPartitionInfo(
+                    partition,
+                    partition.replicaIds.stream()
+                            .collect(Collectors.toMap(id -> id, id -> new Node(id, "", 9092)))
+            );
+            assertEquals(partition.observerIds, Arrays.asList(partitionInfo.observers()).stream().map(Node::id).collect(Collectors.toList()));
+        }
+
+        MetadataResponse.TopicMetadata topicWithoutObservers =  topicMetadatas.stream()
+                .filter(topicMetadata -> topicMetadata.topic().equals("topic3"))
+                .findFirst()
+                .get();
+        for (MetadataResponse.PartitionMetadata partition : topicWithoutObservers.partitionMetadata()) {
+            assertEquals(1, partition.replicaIds.size());
+            assertTrue(partition.observerIds.isEmpty());
+            assertEquals(0, partition.observerIds.size());
+            PartitionInfo partitionInfo = MetadataResponse.toPartitionInfo(
+                    partition,
+                    partition.replicaIds.stream()
+                            .collect(Collectors.toMap(id -> id, id -> new Node(id, "", 9092)))
+            );
+            assertEquals(partition.observerIds, Arrays.asList(partitionInfo.observers()).stream().map(Node::id).collect(Collectors.toList()));
         }
     }
 
@@ -3360,4 +3403,135 @@ public class RequestResponseTest {
         return new ListTransactionsResponse(response);
     }
 
+    private ReportQuotaConsumptionRequest createReportQuotaConsumptionRequest(short version) {
+        ReportQuotaConsumptionRequestData data = new ReportQuotaConsumptionRequestData();
+        data.setBrokerId(1);
+        data.setEntries(Arrays.asList(
+                new ReportQuotaConsumptionRequestData.EntryData()
+                        .setEntity(Arrays.asList(new ReportQuotaConsumptionRequestData.EntityData()
+                                .setEntityType(ClientQuotaEntity.TENANT)
+                                .setEntityName("lkc-abcdef")))
+                        .setConsumptions(Arrays.asList(new ReportQuotaConsumptionRequestData.ConsumptionData()
+                                .setQuotaType("egress")
+                                .setThrottled(true)
+                                .setUsage(200)))));
+        return new ReportQuotaConsumptionRequest.Builder(data).build(version);
+    }
+
+    private ReportQuotaConsumptionResponse createReportQuotaConsumptionResponse() {
+        ReportQuotaConsumptionResponseData data = new ReportQuotaConsumptionResponseData()
+                .setThrottleTimeMs(100);
+        return new ReportQuotaConsumptionResponse(data);
+    }
+
+    private PublishQuotaTargetRequest createPublishQuotaTargetRequest(short version) {
+        PublishQuotaTargetRequestData data = new PublishQuotaTargetRequestData()
+                .setEntries(Collections.singletonList(
+                        new PublishQuotaTargetRequestData.EntryData()
+                                .setEntity(Collections.singletonList(new PublishQuotaTargetRequestData.EntityData()
+                                        .setEntityType(ClientQuotaEntity.TENANT)
+                                        .setEntityName("lkc-abcdef")))
+                                .setQuotas(Collections.singletonList(new PublishQuotaTargetRequestData.QuotaData()
+                                        .setQuotaType("egress")
+                                        .setQuota(200)))
+                ));
+        return new PublishQuotaTargetRequest.Builder(data).build(version);
+    }
+
+    private PublishQuotaTargetResponse createPublishQuotaTargetResponse() {
+        PublishQuotaTargetResponseData data = new PublishQuotaTargetResponseData()
+                .setThrottleTimeMs(100);
+        return new PublishQuotaTargetResponse(data);
+    }
+
+    @Test
+    public void testInvalidSaslHandShakeRequest() {
+        AbstractRequest request = new SaslHandshakeRequest.Builder(
+                new SaslHandshakeRequestData().setMechanism("PLAIN")).build();
+        ByteBuffer serializedBytes = request.serialize();
+        // corrupt the length of the sasl mechanism string
+        serializedBytes.putShort(0, Short.MAX_VALUE);
+
+        String msg = assertThrows(RuntimeException.class, () -> AbstractRequest.
+            parseRequest(request.apiKey(), request.version(), serializedBytes, MessageContext.IDENTITY)).getMessage();
+        assertEquals("Error reading byte array of 32767 byte(s): only 5 byte(s) available", msg);
+    }
+
+    @Test
+    public void testInvalidSaslAuthenticateRequest() {
+        short version = (short) 1; // choose a version with fixed length encoding, for simplicity
+        byte[] b = new byte[] {
+            0x11, 0x1f, 0x15, 0x2c,
+            0x5e, 0x2a, 0x20, 0x26,
+            0x6c, 0x39, 0x45, 0x1f,
+            0x25, 0x1c, 0x2d, 0x25,
+            0x43, 0x2a, 0x11, 0x76
+        };
+        SaslAuthenticateRequestData data = new SaslAuthenticateRequestData().setAuthBytes(b);
+        AbstractRequest request = new SaslAuthenticateRequest(data, version);
+        ByteBuffer serializedBytes = request.serialize();
+
+        // corrupt the length of the bytes array
+        serializedBytes.putInt(0, Integer.MAX_VALUE);
+
+        String msg = assertThrows(RuntimeException.class, () -> AbstractRequest.
+                parseRequest(request.apiKey(), request.version(), serializedBytes, MessageContext.IDENTITY)).getMessage();
+        assertEquals("Error reading byte array of 2147483647 byte(s): only 20 byte(s) available", msg);
+    }
+
+    @Test
+    public void testValidTaggedFieldsWithSaslAuthenticateRequest() {
+        byte[] byteArray = new byte[11];
+        ByteBufferAccessor accessor = new ByteBufferAccessor(ByteBuffer.wrap(byteArray));
+
+        //construct a SASL_AUTHENTICATE request
+        byte[] authBytes = "test".getBytes(StandardCharsets.UTF_8);
+        accessor.writeUnsignedVarint(authBytes.length + 1);
+        accessor.writeByteArray(authBytes);
+
+        //write total numbers of tags
+        accessor.writeUnsignedVarint(1);
+
+        //write first tag
+        RawTaggedField taggedField = new RawTaggedField(1, new byte[] {0x1, 0x2, 0x3});
+        accessor.writeUnsignedVarint(taggedField.tag());
+        accessor.writeUnsignedVarint(taggedField.size());
+        accessor.writeByteArray(taggedField.data());
+
+        accessor.flip();
+
+        SaslAuthenticateRequest saslAuthenticateRequest = (SaslAuthenticateRequest) AbstractRequest.
+                parseRequest(SASL_AUTHENTICATE, SASL_AUTHENTICATE.latestVersion(),
+                    accessor.buffer(), MessageContext.IDENTITY).request;
+        Assertions.assertArrayEquals(authBytes, saslAuthenticateRequest.data().authBytes());
+        assertEquals(1, saslAuthenticateRequest.data().unknownTaggedFields().size());
+        assertEquals(taggedField, saslAuthenticateRequest.data().unknownTaggedFields().get(0));
+    }
+
+    @Test
+    public void testInvalidTaggedFieldsWithSaslAuthenticateRequest() {
+        byte[] byteArray = new byte[13];
+        ByteBufferAccessor accessor = new ByteBufferAccessor(ByteBuffer.wrap(byteArray));
+
+        //construct a SASL_AUTHENTICATE request
+        byte[] authBytes = "test".getBytes(StandardCharsets.UTF_8);
+        accessor.writeUnsignedVarint(authBytes.length + 1);
+        accessor.writeByteArray(authBytes);
+
+        //write total numbers of tags
+        accessor.writeUnsignedVarint(1);
+
+        //write first tag
+        RawTaggedField taggedField = new RawTaggedField(1, new byte[] {0x1, 0x2, 0x3});
+        accessor.writeUnsignedVarint(taggedField.tag());
+        accessor.writeUnsignedVarint(Short.MAX_VALUE); // set wrong size for tagged field
+        accessor.writeByteArray(taggedField.data());
+
+        accessor.flip();
+
+        String msg = assertThrows(RuntimeException.class, () -> AbstractRequest.
+                parseRequest(SASL_AUTHENTICATE, SASL_AUTHENTICATE.latestVersion(), accessor.buffer(),
+                        MessageContext.IDENTITY)).getMessage();
+        assertEquals("Error reading byte array of 32767 byte(s): only 3 byte(s) available", msg);
+    }
 }

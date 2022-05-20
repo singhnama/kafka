@@ -605,15 +605,20 @@ public final class MessageDataGenerator implements MessageClassGenerator {
         buffer.printf("} else {%n");
         buffer.incrementIndent();
         if (type.isString()) {
-            buffer.printf("%s_readable.readString(%s)%s",
-                assignmentPrefix, lengthVar, assignmentSuffix);
+            if (entityType != EntityType.UNKNOWN) {
+                headerGenerator.addImport(MessageGenerator.ENTITY_TYPE_CLASS);
+                buffer.printf("%s_context.read(EntityType.%s, _readable.readString(%s))%s",
+                    assignmentPrefix, entityType.name(), lengthVar, assignmentSuffix);
+            } else {
+                buffer.printf("%s_readable.readString(%s)%s",
+                    assignmentPrefix, lengthVar, assignmentSuffix);
+            }
         } else if (type.isBytes()) {
             if (zeroCopy) {
                 buffer.printf("%s_readable.readByteBuffer(%s)%s",
                     assignmentPrefix, lengthVar, assignmentSuffix);
             } else {
-                buffer.printf("byte[] newBytes = new byte[%s];%n", lengthVar);
-                buffer.printf("_readable.readArray(newBytes);%n");
+                buffer.printf("byte[] newBytes = _readable.readArray(%s);%n", lengthVar);
                 buffer.printf("%snewBytes%s", assignmentPrefix, assignmentSuffix);
             }
         } else if (type.isRecords()) {
@@ -621,6 +626,12 @@ public final class MessageDataGenerator implements MessageClassGenerator {
                 assignmentPrefix, lengthVar, assignmentSuffix);
         } else if (type.isArray()) {
             FieldType.ArrayType arrayType = (FieldType.ArrayType) type;
+            buffer.printf("if (%s > _readable.remaining()) {%n", lengthVar);
+            buffer.incrementIndent();
+            buffer.printf("throw new RuntimeException(\"Tried to allocate a collection of size \" + %s + \", but " +
+                    "there are only \" + _readable.remaining() + \" bytes remaining.\");%n", lengthVar);
+            buffer.decrementIndent();
+            buffer.printf("}%n");
             if (isStructArrayWithKeys) {
                 headerGenerator.addImport(MessageGenerator.IMPLICIT_LINKED_HASH_MULTI_COLLECTION_CLASS);
                 buffer.printf("%s newCollection = new %s(%s);%n",
