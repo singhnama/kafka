@@ -3403,47 +3403,6 @@ public class RequestResponseTest {
         return new ListTransactionsResponse(response);
     }
 
-    private ReportQuotaConsumptionRequest createReportQuotaConsumptionRequest(short version) {
-        ReportQuotaConsumptionRequestData data = new ReportQuotaConsumptionRequestData();
-        data.setBrokerId(1);
-        data.setEntries(Arrays.asList(
-                new ReportQuotaConsumptionRequestData.EntryData()
-                        .setEntity(Arrays.asList(new ReportQuotaConsumptionRequestData.EntityData()
-                                .setEntityType(ClientQuotaEntity.TENANT)
-                                .setEntityName("lkc-abcdef")))
-                        .setConsumptions(Arrays.asList(new ReportQuotaConsumptionRequestData.ConsumptionData()
-                                .setQuotaType("egress")
-                                .setThrottled(true)
-                                .setUsage(200)))));
-        return new ReportQuotaConsumptionRequest.Builder(data).build(version);
-    }
-
-    private ReportQuotaConsumptionResponse createReportQuotaConsumptionResponse() {
-        ReportQuotaConsumptionResponseData data = new ReportQuotaConsumptionResponseData()
-                .setThrottleTimeMs(100);
-        return new ReportQuotaConsumptionResponse(data);
-    }
-
-    private PublishQuotaTargetRequest createPublishQuotaTargetRequest(short version) {
-        PublishQuotaTargetRequestData data = new PublishQuotaTargetRequestData()
-                .setEntries(Collections.singletonList(
-                        new PublishQuotaTargetRequestData.EntryData()
-                                .setEntity(Collections.singletonList(new PublishQuotaTargetRequestData.EntityData()
-                                        .setEntityType(ClientQuotaEntity.TENANT)
-                                        .setEntityName("lkc-abcdef")))
-                                .setQuotas(Collections.singletonList(new PublishQuotaTargetRequestData.QuotaData()
-                                        .setQuotaType("egress")
-                                        .setQuota(200)))
-                ));
-        return new PublishQuotaTargetRequest.Builder(data).build(version);
-    }
-
-    private PublishQuotaTargetResponse createPublishQuotaTargetResponse() {
-        PublishQuotaTargetResponseData data = new PublishQuotaTargetResponseData()
-                .setThrottleTimeMs(100);
-        return new PublishQuotaTargetResponse(data);
-    }
-
     @Test
     public void testInvalidSaslHandShakeRequest() {
         AbstractRequest request = new SaslHandshakeRequest.Builder(

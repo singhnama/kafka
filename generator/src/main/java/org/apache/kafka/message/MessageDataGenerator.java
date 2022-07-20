@@ -605,14 +605,8 @@ public final class MessageDataGenerator implements MessageClassGenerator {
         buffer.printf("} else {%n");
         buffer.incrementIndent();
         if (type.isString()) {
-            if (entityType != EntityType.UNKNOWN) {
-                headerGenerator.addImport(MessageGenerator.ENTITY_TYPE_CLASS);
-                buffer.printf("%s_context.read(EntityType.%s, _readable.readString(%s))%s",
-                    assignmentPrefix, entityType.name(), lengthVar, assignmentSuffix);
-            } else {
-                buffer.printf("%s_readable.readString(%s)%s",
-                    assignmentPrefix, lengthVar, assignmentSuffix);
-            }
+            buffer.printf("%s_readable.readString(%s)%s",
+                assignmentPrefix, lengthVar, assignmentSuffix);
         } else if (type.isBytes()) {
             if (zeroCopy) {
                 buffer.printf("%s_readable.readByteBuffer(%s)%s",
